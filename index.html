@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0b1220">
+<meta name="description" content="ProjectHub - personal HTML project launcher">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="assets/icons/icon-192.png">
+<link rel="stylesheet" href="css/app.css">
+<title>ProjectHub — HTML Project Launcher</title>
+</head>
+<body>
+<div class="app-shell">
+  <aside class="sidebar">
+    <div class="brand"><div class="brand-mark">P</div><div><strong>ProjectHub</strong><span>HTML Launcher</span></div></div>
+    <nav>
+      <button class="nav-item active" data-nav="library">⌂ <span>Library</span></button>
+      <button class="nav-item" data-nav="favorites">★ <span>Favorites</span></button>
+      <button class="nav-item" data-nav="recent">◷ <span>Recent</span></button>
+      <button class="nav-item" data-nav="add">＋ <span>Add Project</span></button>
+    </nav>
+    <div class="sidebar-bottom">
+      <button id="installBtn" class="nav-item" hidden>⇩ <span>Install App</span></button>
+      <button id="themeBtn" class="nav-item">☾ <span>Toggle theme</span></button>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div><div class="eyebrow">YOUR PROJECT LIBRARY</div><h1 id="pageTitle">Projects</h1></div>
+      <button id="addTopBtn" class="primary-btn">＋ Add project</button>
+    </header>
+
+    <section id="libraryView">
+      <div class="toolbar">
+        <label class="search"><span>⌕</span><input id="searchInput" type="search" placeholder="Search projects, tags, descriptions…" autocomplete="off"></label>
+        <div id="categoryBar" class="chips"></div>
+      </div>
+      <div id="stats" class="stats"></div>
+      <div id="projectGrid" class="project-grid"></div>
+    </section>
+
+    <section id="addView" hidden>
+      <div class="panel add-panel">
+        <div class="eyebrow">IMPORT OR PASTE</div>
+        <h2>Add a project</h2>
+        <p>Paste a complete standalone HTML document, or import an .html file. Browser-saved projects stay on this device.</p>
+        <form id="addForm">
+          <div class="form-grid">
+            <label>Project name<input id="pName" required maxlength="80" placeholder="My Web App"></label>
+            <label>Category<select id="pCategory"><option>Web Apps</option><option>Tools</option><option>Games</option><option>Utilities</option><option>Dashboards</option><option>Forms</option><option>Experiments</option><option>Custom</option></select></label>
+          </div>
+          <label>Description<textarea id="pDescription" rows="2" maxlength="220" placeholder="Short description"></textarea></label>
+          <label>Tags<input id="pTags" placeholder="tool, calculator, finance"></label>
+          <label>HTML code<textarea id="pHtml" class="code" rows="16" placeholder="PASTE YOUR COMPLETE HTML HERE"></textarea></label>
+          <div class="dropzone" id="dropzone">Drop an .html file here or <button type="button" id="fileBtn" class="text-btn">choose file</button><input id="fileInput" type="file" accept=".html,.htm,text/html" hidden></div>
+          <div class="form-actions"><button type="button" id="previewPaste" class="secondary-btn">Preview</button><button type="reset" class="secondary-btn">Clear</button><button class="primary-btn" type="submit">Save project</button></div>
+        </form>
+        <div class="notice"><strong>Permanent projects:</strong> put each project in <code>projects/project-id/index.html</code> and register it in <code>js/projects.js</code>. The Add Project form is for browser-local projects.</div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<nav class="mobile-nav">
+  <button class="active" data-nav="library">⌂<span>Library</span></button>
+  <button data-nav="favorites">★<span>Favorites</span></button>
+  <button data-nav="recent">◷<span>Recent</span></button>
+  <button data-nav="add">＋<span>Add</span></button>
+</nav>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<script src="js/storage.js"></script>
+<script src="js/projects.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
