@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0b1220">
+<title>Project Viewer</title>
+<link rel="stylesheet" href="css/viewer.css">
+</head>
+<body>
+<header class="viewer-bar">
+  <button id="backBtn" class="icon-btn">←</button>
+  <div class="viewer-title"><strong id="viewerName">Project</strong><span id="viewerMeta"></span></div>
+  <button id="reloadBtn" class="icon-btn">↻</button>
+  <button id="fullBtn" class="icon-btn">⛶</button>
+  <button id="homeBtn" class="icon-btn">⌂</button>
+</header>
+<main id="stage">
+  <div id="loading">Loading project…</div>
+  <iframe id="projectFrame" title="Project" sandbox="allow-scripts allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-downloads" referrerpolicy="no-referrer"></iframe>
+</main>
+<div id="error" class="error" hidden>
+  <div class="error-card"><div class="error-icon">!</div><h1>Project couldn't load</h1><p id="errorText"></p><button id="retryBtn" class="primary">Reload</button><button id="errorHomeBtn" class="secondary">Library</button></div>
+</div>
+<script src="js/storage.js"></script>
+<script src="js/projects.js"></script>
+<script src="js/viewer.js"></script>
+</body>
+</html>
