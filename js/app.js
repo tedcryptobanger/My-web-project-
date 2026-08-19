@@ -7,12 +7,12 @@ const $$ = s => [...document.querySelectorAll(s)];
  * =========================================================
  *
  * Your Worker URL from your screenshot:
- * https://purchase.workers.dev
+ * https://project-launcher-api.alertsvisapurchase.workers.dev
  *
  * If your Worker URL is different, change it here.
  */
 
-const API_BASE = "https://purchase.workers.dev";
+const API_BASE = "https://project-launcher-api.alertsvisapurchase.workers.dev";
 
 let allProjects = [];
 let currentNav = "library";
