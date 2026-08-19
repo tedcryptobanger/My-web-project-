@@ -1,18 +1,15 @@
+/* =========================================================
+   PROJECT LAUNCHER — CLOUD/R2 ENABLED APP.JS
+   ========================================================= */
+
+const API_BASE =
+  "https://project-launcher-api.alertsvisapurchase.workers.dev";
+
+const JSZIP_URL =
+  "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js";
+
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
-
-/*
- * =========================================================
- * CLOUDFLARE API
- * =========================================================
- *
- * Your Worker URL from your screenshot:
- * https://project-launcher-api.alertsvisapurchase.workers.dev
- *
- * If your Worker URL is different, change it here.
- */
-
-const API_BASE = "https://project-launcher-api.alertsvisapurchase.workers.dev";
 
 let allProjects = [];
 let currentNav = "library";
@@ -34,396 +31,160 @@ document.addEventListener("DOMContentLoaded", init);
 
 
 /* =========================================================
-   INITIALIZE
+   INITIALIZATION
    ========================================================= */
 
 async function init() {
-
   try {
-
-    const cloudProjects = await fetchCloudProjects();
+    const staticProjects = getStaticProjects();
 
     let localProjects = [];
 
     try {
-      localProjects =
-        (await idbGetAll()).map(p => ({
-          ...p,
-          source: "local"
-        }));
-    } catch {}
+      localProjects = (await idbGetAll()).map(p => ({
+        ...p,
+        source: "local"
+      }));
+    } catch {
+      localProjects = [];
+    }
+
+    let cloudProjects = [];
+
+    try {
+      cloudProjects = await fetchCloudProjects();
+    } catch (error) {
+      console.warn("Cloud project loading failed:", error);
+    }
 
     /*
-     * Static demo + cloud + local
-     *
-     * Cloud projects take priority over duplicates.
+     * Merge projects.
+     * Cloud projects take priority when IDs are identical.
      */
+    const merged = new Map();
 
-    const combined = [
-      ...getStaticProjects(),
-      ...cloudProjects,
-      ...localProjects
-    ];
+    [...staticProjects, ...localProjects, ...cloudProjects]
+      .forEach(project => {
+        if (project?.id) {
+          merged.set(project.id, project);
+        }
+      });
 
-    const unique = new Map();
-
-    combined.forEach(project => {
-      unique.set(project.id, project);
-    });
-
-    allProjects = [...unique.values()];
+    allProjects = [...merged.values()];
 
   } catch (error) {
-
     console.error(error);
 
     try {
-      allProjects = [
-        ...getStaticProjects(),
-        ...(await idbGetAll()).map(p => ({
-          ...p,
-          source: "local"
-        }))
-      ];
-    } catch {
       allProjects = getStaticProjects();
+    } catch {
+      allProjects = [];
     }
 
     showToast(
-      "Cloud API unavailable. Showing local projects."
+      "Launcher loaded with limited storage support."
     );
   }
 
   renderCategories();
   render();
 
-  bindEvents();
-
+  bindInterface();
   loadTheme();
 
   /*
-   * PWA installation
+   * PWA install support.
    */
-
   window.addEventListener(
     "beforeinstallprompt",
-    e => {
-      e.preventDefault();
-      deferredInstall = e;
+    event => {
+      event.preventDefault();
+      deferredInstall = event;
 
-      const installBtn = $("#installBtn");
+      const button = $("#installBtn");
 
-      if (installBtn) {
-        installBtn.hidden = false;
+      if (button) {
+        button.hidden = false;
       }
     }
   );
 
-  const installBtn = $("#installBtn");
+  const installButton = $("#installBtn");
 
-  if (installBtn) {
-
-    installBtn.onclick = async () => {
-
+  if (installButton) {
+    installButton.onclick = async () => {
       if (!deferredInstall) return;
 
       await deferredInstall.prompt();
-
       deferredInstall = null;
+      installButton.hidden = true;
     };
   }
 
   /*
-   * Service worker
+   * Service worker.
    */
-
   if ("serviceWorker" in navigator) {
-
     navigator.serviceWorker
       .register("sw.js")
-      .catch(() => {});
+      .catch(error => {
+        console.warn(
+          "Service worker registration failed:",
+          error
+        );
+      });
   }
+
+  /*
+   * Make the Add Project interface more powerful.
+   */
+  setupCloudUploadUI();
 }
 
 
 /* =========================================================
-   EVENTS
+   INTERFACE EVENTS
    ========================================================= */
 
-function bindEvents() {
-
+function bindInterface() {
   $$(".app-shell [data-nav], .mobile-nav [data-nav]")
     .forEach(button => {
-
       button.onclick = () =>
         navigate(button.dataset.nav);
-
     });
 
-  const addTopBtn = $("#addTopBtn");
+  const addTop = $("#addTopBtn");
 
-  if (addTopBtn) {
-    addTopBtn.onclick = () =>
+  if (addTop) {
+    addTop.onclick = () =>
       navigate("add");
   }
 
-  const themeBtn = $("#themeBtn");
+  const themeButton = $("#themeBtn");
 
-  if (themeBtn) {
-    themeBtn.onclick = toggleTheme;
+  if (themeButton) {
+    themeButton.onclick = toggleTheme;
   }
 
   if (els.search) {
     els.search.oninput = render;
   }
 
-  const addForm = $("#addForm");
+  const form = $("#addForm");
 
-  if (addForm) {
-    addForm.onsubmit = saveProject;
+  if (form) {
+    /*
+     * We override the original local-storage submit
+     * handler with the cloud publisher.
+     */
+    form.onsubmit = publishProject;
   }
 
-  const fileBtn = $("#fileBtn");
+  const previewPaste = $("#previewPaste");
 
-  if (fileBtn) {
-    fileBtn.onclick = () =>
-      $("#fileInput")?.click();
+  if (previewPaste) {
+    previewPaste.onclick = previewPasteProject;
   }
-
-  const fileInput = $("#fileInput");
-
-  if (fileInput) {
-    fileInput.onchange = readFile;
-  }
-
-  const dropzone = $("#dropzone");
-
-  if (dropzone) {
-
-    dropzone.ondragover = e => {
-
-      e.preventDefault();
-
-      dropzone.classList.add("drag");
-    };
-
-    dropzone.ondragleave = () => {
-
-      dropzone.classList.remove("drag");
-    };
-
-    dropzone.ondrop = readDrop;
-  }
-
-  const previewPasteBtn = $("#previewPaste");
-
-  if (previewPasteBtn) {
-    previewPasteBtn.onclick = previewPaste;
-  }
-}
-
-
-/* =========================================================
-   CLOUD API
-   ========================================================= */
-
-async function fetchCloudProjects() {
-
-  const response =
-    await fetch(`${API_BASE}/api/projects`, {
-      method: "GET",
-      headers: {
-        "Accept": "application/json"
-      }
-    });
-
-  if (!response.ok) {
-
-    throw new Error(
-      `Cloud API returned ${response.status}`
-    );
-  }
-
-  const data = await response.json();
-
-  if (!data.ok) {
-
-    throw new Error(
-      data.error || "Could not load projects"
-    );
-  }
-
-  return Array.isArray(data.projects)
-    ? data.projects
-    : [];
-}
-
-
-/* =========================================================
-   ADMIN TOKEN
-   ========================================================= */
-
-function getAdminToken() {
-
-  return sessionStorage.getItem(
-    "projecthub_admin_token"
-  ) || "";
-}
-
-
-function setAdminToken(token) {
-
-  sessionStorage.setItem(
-    "projecthub_admin_token",
-    token
-  );
-}
-
-
-function clearAdminToken() {
-
-  sessionStorage.removeItem(
-    "projecthub_admin_token"
-  );
-}
-
-
-/*
- * Ask for the Cloudflare ADMIN_TOKEN only when
- * a publish operation requires it.
- *
- * It is stored in sessionStorage, not permanently
- * in localStorage.
- */
-
-function requestAdminToken() {
-
-  const token = prompt(
-    "Enter your Project Launcher ADMIN_TOKEN:"
-  );
-
-  if (!token) {
-    return "";
-  }
-
-  setAdminToken(token.trim());
-
-  return token.trim();
-}
-
-
-/* =========================================================
-   PUBLISH TO CLOUDFLARE
-   ========================================================= */
-
-async function publishProject(project) {
-
-  let token = getAdminToken();
-
-  if (!token) {
-
-    token = requestAdminToken();
-
-    if (!token) {
-      throw new Error(
-        "Publishing cancelled."
-      );
-    }
-  }
-
-  const form = new FormData();
-
-  /*
-   * Metadata expected by your Worker.
-   */
-
-  form.append(
-    "metadata",
-    JSON.stringify({
-      id: project.id,
-      name: project.name,
-      description: project.description,
-      category: project.category,
-      icon: project.icon,
-      version: project.version,
-      tags: project.tags,
-      entryFile: "index.html"
-    })
-  );
-
-  /*
-   * HTML file
-   */
-
-  const htmlBlob = new Blob(
-    [project.html],
-    {
-      type: "text/html"
-    }
-  );
-
-  form.append(
-    "files",
-    htmlBlob,
-    "index.html"
-  );
-
-  form.append(
-    "paths",
-    "index.html"
-  );
-
-  let response = await fetch(
-    `${API_BASE}/api/projects`,
-    {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${token}`
-      },
-      body: form
-    }
-  );
-
-  /*
-   * If token is wrong, remove it and allow one retry.
-   */
-
-  if (response.status === 401) {
-
-    clearAdminToken();
-
-    token = requestAdminToken();
-
-    if (!token) {
-      throw new Error(
-        "Authorization required."
-      );
-    }
-
-    response = await fetch(
-      `${API_BASE}/api/projects`,
-      {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${token}`
-        },
-        body: form
-      }
-    );
-  }
-
-  const data = await response.json();
-
-  if (!response.ok || !data.ok) {
-
-    throw new Error(
-      data.error ||
-      data.message ||
-      `Publish failed (${response.status})`
-    );
-  }
-
-  return data;
 }
 
 
@@ -432,7 +193,6 @@ async function publishProject(project) {
    ========================================================= */
 
 function navigate(n) {
-
   currentNav = n;
 
   if (els.library) {
@@ -444,7 +204,6 @@ function navigate(n) {
   }
 
   if (els.title) {
-
     els.title.textContent =
       n === "favorites"
         ? "Favorites"
@@ -457,12 +216,10 @@ function navigate(n) {
 
   $$(".app-shell [data-nav], .mobile-nav [data-nav]")
     .forEach(button => {
-
       button.classList.toggle(
         "active",
         button.dataset.nav === n
       );
-
     });
 
   if (n !== "add") {
@@ -476,115 +233,93 @@ function navigate(n) {
    ========================================================= */
 
 function renderCategories() {
-
   if (!els.cats) return;
 
   els.cats.innerHTML =
     DEFAULT_CATEGORIES
-      .map(category => {
-
-        return `
-          <button
-            class="chip ${category === currentCategory ? "active" : ""}"
-            data-cat="${esc(category)}"
-          >
-            ${esc(category)}
-          </button>
-        `;
-
-      })
+      .map(category => `
+        <button
+          class="chip ${category === currentCategory ? "active" : ""}"
+          data-cat="${esc(category)}"
+          type="button"
+        >
+          ${esc(category)}
+        </button>
+      `)
       .join("");
 
   $$("[data-cat]").forEach(button => {
-
     button.onclick = () => {
-
       currentCategory =
         button.dataset.cat;
 
       renderCategories();
       render();
     };
-
   });
 }
 
 
 /* =========================================================
-   RENDER PROJECTS
+   RENDER PROJECT LIBRARY
    ========================================================= */
 
 function render() {
-
   if (!els.grid) return;
 
-  const q =
-    els.search?.value
-      ?.trim()
-      .toLowerCase() || "";
+  const query =
+    (els.search?.value || "")
+      .trim()
+      .toLowerCase();
 
-  const fav =
+  const favorites =
     prefs.get("favorites", []);
 
   const recent =
     prefs.get("recent", []);
 
-  let list =
-    allProjects.filter(project => {
+  let list = allProjects.filter(project => {
+    if (currentNav === "favorites") {
+      return favorites.includes(project.id);
+    }
 
-      if (currentNav === "favorites") {
+    if (currentNav === "recent") {
+      return recent.includes(project.id);
+    }
 
-        return fav.includes(project.id);
-      }
-
-      if (currentNav === "recent") {
-
-        return recent.includes(project.id);
-      }
-
-      return true;
-    });
-
+    return true;
+  });
 
   if (
     currentCategory !== "All" &&
     currentNav === "library"
   ) {
-
-    list =
-      list.filter(
-        project =>
-          project.category === currentCategory
-      );
+    list = list.filter(
+      project =>
+        project.category === currentCategory
+    );
   }
 
+  if (query) {
+    list = list.filter(project => {
+      const searchable = [
+        project.name,
+        project.description,
+        project.category,
+        ...(project.tags || [])
+      ]
+        .join(" ")
+        .toLowerCase();
 
-  if (q) {
-
-    list =
-      list.filter(project => {
-
-        return [
-          project.name,
-          project.description,
-          project.category,
-          ...(project.tags || [])
-        ]
-          .join(" ")
-          .toLowerCase()
-          .includes(q);
-
-      });
+      return searchable.includes(query);
+    });
   }
-
 
   if (els.stats) {
-
     els.stats.textContent =
       `${list.length} project${list.length === 1 ? "" : "s"} • ` +
-      `${fav.length} favorite${fav.length === 1 ? "" : "s"}`;
+      `${favorites.length} favorite${favorites.length === 1 ? "" : "s"}`;
   }
-
 
   els.grid.innerHTML =
     list.length
@@ -594,54 +329,53 @@ function render() {
           <div>⌘</div>
           <h2>Nothing found</h2>
           <p>Add a project or change your filters.</p>
-          <button class="primary-btn" id="emptyAdd">
+          <button
+            class="primary-btn"
+            id="emptyAdd"
+            type="button"
+          >
             ＋ Add project
           </button>
         </div>
       `;
-
 
   $("#emptyAdd")?.addEventListener(
     "click",
     () => navigate("add")
   );
 
-
   $$(".run").forEach(button => {
-
     button.onclick = () =>
       openViewer(button.dataset.id);
-
   });
-
 
   $$(".browser").forEach(button => {
-
     button.onclick = () =>
       openBrowser(button.dataset.id);
-
   });
 
-
   $$(".fav").forEach(button => {
-
     button.onclick = () =>
       toggleFav(button.dataset.id);
-
   });
 }
 
 
 /* =========================================================
-   CARD
+   PROJECT CARD
    ========================================================= */
 
-function card(p) {
+function card(project) {
+  const favorite =
+    prefs.get("favorites", [])
+      .includes(project.id);
 
-  const fav =
-    prefs
-      .get("favorites", [])
-      .includes(p.id);
+  const sourceLabel =
+    project.source === "cloud"
+      ? "Cloud"
+      : project.source === "static"
+      ? "Built-in"
+      : "Local";
 
   return `
     <article class="card">
@@ -649,14 +383,16 @@ function card(p) {
       <div class="card-top">
 
         <div class="project-icon">
-          ${p.icon || "◇"}
+          ${project.icon || "◇"}
         </div>
 
         <button
-          class="fav ${fav ? "on" : ""}"
-          data-id="${esc(p.id)}"
+          class="fav ${favorite ? "on" : ""}"
+          data-id="${esc(project.id)}"
+          type="button"
+          aria-label="Favorite"
         >
-          ${fav ? "★" : "☆"}
+          ${favorite ? "★" : "☆"}
         </button>
 
       </div>
@@ -664,16 +400,16 @@ function card(p) {
       <div class="card-body">
 
         <div class="badge">
-          ${esc(p.category || "Custom")}
+          ${esc(project.category || "Custom")}
         </div>
 
         <h3>
-          ${esc(p.name)}
+          ${esc(project.name || "Untitled Project")}
         </h3>
 
         <p>
           ${esc(
-            p.description ||
+            project.description ||
             "No description"
           )}
         </p>
@@ -681,11 +417,15 @@ function card(p) {
         <div class="meta">
 
           <span>
-            v${esc(p.version || "1.0.0")}
+            v${esc(project.version || "1.0.0")}
           </span>
 
           <span>
-            ${esc(p.dateAdded || "")}
+            ${esc(project.dateAdded || "")}
+          </span>
+
+          <span>
+            ${sourceLabel}
           </span>
 
         </div>
@@ -696,14 +436,16 @@ function card(p) {
 
         <button
           class="primary-small run"
-          data-id="${esc(p.id)}"
+          data-id="${esc(project.id)}"
+          type="button"
         >
           ▶ Run in App
         </button>
 
         <button
           class="secondary-small browser"
-          data-id="${esc(p.id)}"
+          data-id="${esc(project.id)}"
+          type="button"
         >
           ↗ Browser
         </button>
@@ -716,28 +458,26 @@ function card(p) {
 
 
 /* =========================================================
-   FIND PROJECT
+   PROJECT LOOKUP
    ========================================================= */
 
 function findProject(id) {
-
   return allProjects.find(
-    p => p.id === id
+    project => project.id === id
   );
 }
 
 
 /* =========================================================
-   OPEN VIEWER
+   RUN PROJECT
    ========================================================= */
 
 function openViewer(id) {
-
   if (!findProject(id)) return;
 
   let recent =
     prefs.get("recent", [])
-      .filter(x => x !== id);
+      .filter(existing => existing !== id);
 
   recent.unshift(id);
 
@@ -752,44 +492,30 @@ function openViewer(id) {
 
 
 /* =========================================================
-   OPEN BROWSER
+   OPEN IN BROWSER
    ========================================================= */
 
 function openBrowser(id) {
-
-  const project =
-    findProject(id);
+  const project = findProject(id);
 
   if (!project) return;
 
-
   /*
-   * CLOUD PROJECT
+   * Cloud projects are served directly by Worker/R2.
    */
-
   if (project.source === "cloud") {
-
-    const entry =
-      project.entryFile ||
-      "index.html";
-
     const url =
-      `${API_BASE}/projects/` +
-      `${encodeURIComponent(project.id)}/` +
-      `${entry
-        .split("/")
-        .map(encodeURIComponent)
-        .join("/")}`;
+      project.path ||
+      `${API_BASE}/projects/${encodeURIComponent(project.id)}/${encodeURIComponent(project.entryFile || "index.html")}`;
 
-    const w =
+    const opened =
       window.open(
         url,
         "_blank",
         "noopener,noreferrer"
       );
 
-    if (!w) {
-
+    if (!opened) {
       showToast(
         "Popup blocked. Allow popups for this site."
       );
@@ -798,40 +524,35 @@ function openBrowser(id) {
     return;
   }
 
-
   /*
-   * LOCAL PROJECT
+   * Static projects.
    */
+  if (project.source === "static") {
+    const opened =
+      window.open(
+        project.path,
+        "_blank",
+        "noopener,noreferrer"
+      );
 
-  if (project.source === "local") {
-
-    showToast(
-      "Local projects stay in the isolated viewer."
-    );
-
-    openViewer(id);
+    if (!opened) {
+      showToast(
+        "Popup blocked. Allow popups for this site."
+      );
+    }
 
     return;
   }
 
-
   /*
-   * STATIC PROJECT
+   * Browser-local projects stay inside the
+   * isolated viewer.
    */
+  showToast(
+    "Local projects stay in the isolated viewer."
+  );
 
-  const w =
-    window.open(
-      project.path,
-      "_blank",
-      "noopener,noreferrer"
-    );
-
-  if (!w) {
-
-    showToast(
-      "Popup blocked. Allow popups for this site."
-    );
-  }
+  openViewer(id);
 }
 
 
@@ -840,21 +561,17 @@ function openBrowser(id) {
    ========================================================= */
 
 function toggleFav(id) {
+  let favorites =
+    prefs.get("favorites", []);
 
-  let a =
-    prefs.get(
-      "favorites",
-      []
-    );
-
-  a =
-    a.includes(id)
-      ? a.filter(x => x !== id)
-      : [...a, id];
+  favorites =
+    favorites.includes(id)
+      ? favorites.filter(x => x !== id)
+      : [...favorites, id];
 
   prefs.set(
     "favorites",
-    a
+    favorites
   );
 
   render();
@@ -862,279 +579,1125 @@ function toggleFav(id) {
 
 
 /* =========================================================
-   SAVE / PUBLISH PROJECT
+   CLOUD PROJECT API
    ========================================================= */
 
-async function saveProject(e) {
+async function fetchCloudProjects() {
+  const response =
+    await fetch(
+      `${API_BASE}/api/projects`,
+      {
+        method: "GET",
+        headers: {
+          Accept: "application/json"
+        },
+        cache: "no-store"
+      }
+    );
 
-  e.preventDefault();
+  if (!response.ok) {
+    throw new Error(
+      `API returned HTTP ${response.status}`
+    );
+  }
 
-  const html =
-    $("#pHtml")?.value.trim();
+  const data =
+    await response.json();
 
-  if (!html) {
+  if (!data.ok) {
+    throw new Error(
+      data.error ||
+      "Unable to load cloud projects."
+    );
+  }
 
+  return (data.projects || []).map(project => ({
+    ...project,
+    source: "cloud",
+
+    path:
+      `${API_BASE}/projects/` +
+      `${encodeURIComponent(project.id)}/` +
+      `${encodeURIComponent(project.entryFile || "index.html")}`
+  }));
+}
+
+
+/* =========================================================
+   CLOUD UPLOAD UI
+   ========================================================= */
+
+function setupCloudUploadUI() {
+  const form = $("#addForm");
+
+  if (!form) return;
+
+  /*
+   * Do not destroy the existing HTML form.
+   * We enhance it by inserting the cloud uploader
+   * immediately before the HTML code field.
+   */
+
+  if ($("#cloudUploader")) {
+    return;
+  }
+
+  const htmlField =
+    $("#pHtml")?.closest(
+      ".form-group, .field, .input-group"
+    );
+
+  const uploader =
+    document.createElement("div");
+
+  uploader.id = "cloudUploader";
+
+  uploader.style.cssText = `
+    margin:18px 0;
+    padding:18px;
+    border:1px solid rgba(100,140,200,.35);
+    border-radius:16px;
+    background:rgba(20,35,60,.35);
+  `;
+
+  uploader.innerHTML = `
+    <div style="
+      font-weight:700;
+      font-size:16px;
+      margin-bottom:8px;
+    ">
+      Publish project to Cloud
+    </div>
+
+    <div style="
+      opacity:.75;
+      font-size:13px;
+      line-height:1.5;
+      margin-bottom:14px;
+    ">
+      Select a complete ZIP, an entire project folder,
+      or a single HTML file. All files and folder paths
+      will be uploaded to Cloudflare R2.
+    </div>
+
+    <div style="
+      display:flex;
+      flex-wrap:wrap;
+      gap:8px;
+      margin-bottom:12px;
+    ">
+
+      <button
+        id="chooseZipBtn"
+        type="button"
+        class="secondary-small"
+      >
+        📦 Choose ZIP
+      </button>
+
+      <button
+        id="chooseFolderBtn"
+        type="button"
+        class="secondary-small"
+      >
+        📁 Choose Folder
+      </button>
+
+      <button
+        id="chooseHtmlBtn"
+        type="button"
+        class="secondary-small"
+      >
+        📄 Choose HTML
+      </button>
+
+    </div>
+
+    <input
+      id="zipInput"
+      type="file"
+      accept=".zip,application/zip"
+      hidden
+    >
+
+    <input
+      id="folderInput"
+      type="file"
+      webkitdirectory
+      directory
+      multiple
+      hidden
+    >
+
+    <input
+      id="cloudHtmlInput"
+      type="file"
+      accept=".html,.htm,text/html"
+      hidden
+    >
+
+    <div
+      id="selectedFiles"
+      style="
+        font-size:13px;
+        opacity:.8;
+        margin-top:8px;
+      "
+    >
+      No cloud files selected.
+    </div>
+
+    <div style="
+      margin-top:14px;
+    ">
+
+      <label style="
+        display:block;
+        font-size:13px;
+        margin-bottom:6px;
+      ">
+        Admin publishing token
+      </label>
+
+      <input
+        id="adminTokenInput"
+        type="password"
+        autocomplete="off"
+        placeholder="Enter your Cloudflare ADMIN_TOKEN"
+        style="
+          width:100%;
+          box-sizing:border-box;
+          padding:12px;
+          border-radius:10px;
+          border:1px solid rgba(120,150,190,.35);
+          background:rgba(0,0,0,.2);
+          color:inherit;
+        "
+      >
+
+      <div style="
+        font-size:11px;
+        opacity:.6;
+        margin-top:5px;
+      ">
+        Kept only in this browser session. It is not
+        included in your GitHub source code.
+      </div>
+
+    </div>
+
+    <div
+      id="uploadStatus"
+      style="
+        display:none;
+        margin-top:12px;
+        font-size:13px;
+      "
+    ></div>
+  `;
+
+  /*
+   * Insert before the HTML field if possible.
+   */
+  if (htmlField) {
+    form.insertBefore(
+      uploader,
+      htmlField
+    );
+  } else {
+    form.prepend(uploader);
+  }
+
+  $("#chooseZipBtn").onclick =
+    () => $("#zipInput").click();
+
+  $("#chooseFolderBtn").onclick =
+    () => $("#folderInput").click();
+
+  $("#chooseHtmlBtn").onclick =
+    () => $("#cloudHtmlInput").click();
+
+  $("#zipInput").onchange =
+    handleZipSelection;
+
+  $("#folderInput").onchange =
+    handleFolderSelection;
+
+  $("#cloudHtmlInput").onchange =
+    handleHtmlSelection;
+
+  /*
+   * Restore token for this browser tab/session.
+   */
+  const savedToken =
+    sessionStorage.getItem(
+      "projecthub_admin_token"
+    );
+
+  if (savedToken) {
+    $("#adminTokenInput").value =
+      savedToken;
+  }
+}
+
+
+/* =========================================================
+   SELECTED CLOUD FILES
+   ========================================================= */
+
+let cloudFiles = [];
+
+
+/* =========================================================
+   ZIP
+   ========================================================= */
+
+async function handleZipSelection(event) {
+  const file =
+    event.target.files?.[0];
+
+  if (!file) return;
+
+  try {
+    setUploadStatus(
+      "Reading ZIP file..."
+    );
+
+    await loadJSZip();
+
+    const zip =
+      await window.JSZip.loadAsync(file);
+
+    const extracted = [];
+
+    const entries =
+      Object.values(zip.files);
+
+    for (const entry of entries) {
+      if (entry.dir) continue;
+
+      const path =
+        cleanClientPath(
+          entry.name
+        );
+
+      if (!path) continue;
+
+      const blob =
+        await entry.async("blob");
+
+      const outputFile =
+        new File(
+          [blob],
+          getFileName(path),
+          {
+            type:
+              guessMimeType(path)
+          }
+        );
+
+      extracted.push({
+        file: outputFile,
+        path
+      });
+    }
+
+    if (!extracted.length) {
+      setUploadStatus(
+        "The ZIP does not contain usable files.",
+        true
+      );
+
+      return;
+    }
+
+    cloudFiles = extracted;
+
+    /*
+     * Try to detect project name from ZIP.
+     */
+    const firstTopFolder =
+      getCommonTopFolder(
+        extracted.map(x => x.path)
+      );
+
+    if (
+      firstTopFolder &&
+      !$("#pName").value.trim()
+    ) {
+      $("#pName").value =
+        firstTopFolder;
+    }
+
+    updateSelectedFiles();
+
+    setUploadStatus(
+      `${cloudFiles.length} file(s) loaded from ZIP.`
+    );
+
+  } catch (error) {
+    console.error(error);
+
+    cloudFiles = [];
+
+    setUploadStatus(
+      "Could not read ZIP: " +
+      (error.message || error),
+      true
+    );
+  }
+}
+
+
+/* =========================================================
+   FOLDER
+   ========================================================= */
+
+function handleFolderSelection(event) {
+  const files =
+    [...(event.target.files || [])];
+
+  if (!files.length) return;
+
+  cloudFiles =
+    files
+      .map(file => ({
+        file,
+        path:
+          cleanClientPath(
+            file.webkitRelativePath ||
+            file.name
+          )
+      }))
+      .filter(item => item.path);
+
+  const topFolder =
+    getCommonTopFolder(
+      cloudFiles.map(
+        item => item.path
+      )
+    );
+
+  if (
+    topFolder &&
+    !$("#pName").value.trim()
+  ) {
+    $("#pName").value =
+      topFolder;
+  }
+
+  updateSelectedFiles();
+
+  setUploadStatus(
+    `${cloudFiles.length} file(s) selected from folder.`
+  );
+}
+
+
+/* =========================================================
+   SINGLE HTML
+   ========================================================= */
+
+async function handleHtmlSelection(event) {
+  const file =
+    event.target.files?.[0];
+
+  if (!file) return;
+
+  cloudFiles = [
+    {
+      file,
+      path: "index.html"
+    }
+  ];
+
+  if (!$("#pName").value.trim()) {
+    $("#pName").value =
+      file.name
+        .replace(/\.html?$/i, "");
+  }
+
+  /*
+   * Also populate the old HTML textarea,
+   * if the existing interface has one.
+   */
+  try {
+    const html =
+      await file.text();
+
+    if ($("#pHtml")) {
+      $("#pHtml").value =
+        html;
+    }
+  } catch {}
+
+  updateSelectedFiles();
+
+  setUploadStatus(
+    "1 HTML file selected."
+  );
+}
+
+
+/* =========================================================
+   UPLOAD STATUS
+   ========================================================= */
+
+function setUploadStatus(message, error = false) {
+  const element =
+    $("#uploadStatus");
+
+  if (!element) return;
+
+  element.style.display =
+    "block";
+
+  element.style.color =
+    error
+      ? "#ff7b7b"
+      : "inherit";
+
+  element.textContent =
+    message;
+}
+
+
+/* =========================================================
+   FILE SUMMARY
+   ========================================================= */
+
+function updateSelectedFiles() {
+  const element =
+    $("#selectedFiles");
+
+  if (!element) return;
+
+  if (!cloudFiles.length) {
+    element.textContent =
+      "No cloud files selected.";
+
+    return;
+  }
+
+  const preview =
+    cloudFiles
+      .slice(0, 8)
+      .map(item => item.path)
+      .join("\n");
+
+  element.textContent =
+    cloudFiles.length > 8
+      ? `${cloudFiles.length} files selected.\n${preview}\n...`
+      : `${cloudFiles.length} files selected.\n${preview}`;
+
+  element.style.whiteSpace =
+    "pre-line";
+}
+
+
+/* =========================================================
+   PUBLISH PROJECT
+   ========================================================= */
+
+async function publishProject(event) {
+  event.preventDefault();
+
+  /*
+   * If the user has not selected a ZIP/folder,
+   * fall back to the old HTML textarea.
+   */
+  if (!cloudFiles.length) {
+    const html =
+      $("#pHtml")?.value.trim();
+
+    if (html) {
+      cloudFiles = [
+        {
+          file:
+            new File(
+              [html],
+              "index.html",
+              {
+                type:
+                  "text/html"
+              }
+            ),
+          path: "index.html"
+        }
+      ];
+    }
+  }
+
+  if (!cloudFiles.length) {
     showToast(
-      "Paste HTML first."
+      "Choose a ZIP, folder, or HTML file first."
+    );
+
+    setUploadStatus(
+      "No project files selected.",
+      true
     );
 
     return;
   }
 
-
   const name =
-    $("#pName")?.value.trim() ||
-    "Untitled Project";
+    $("#pName")?.value.trim();
 
+  if (!name) {
+    showToast(
+      "Enter a project name."
+    );
 
-  const project = {
+    $("#pName")?.focus();
 
-    id:
-      "project-" +
-      Date.now()
-        .toString(36),
-
-    name,
-
-    description:
-      $("#pDescription")
-        ?.value.trim() || "",
-
-    category:
-      $("#pCategory")
-        ?.value || "Custom",
-
-    tags:
-      ($("#pTags")
-        ?.value || "")
-        .split(",")
-        .map(x => x.trim())
-        .filter(Boolean),
-
-    icon: "📄",
-
-    version: "1.0.0",
-
-    dateAdded:
-      new Date()
-        .toISOString()
-        .slice(0, 10),
-
-    html,
-
-    source: "cloud"
-  };
-
-
-  /*
-   * Disable submit button while publishing.
-   */
-
-  const submit =
-    e.submitter ||
-    $("#addForm button[type='submit']");
-
-  if (submit) {
-    submit.disabled = true;
-    submit.dataset.oldText =
-      submit.textContent;
-    submit.textContent =
-      "Publishing…";
+    return;
   }
 
+  const token =
+    $("#adminTokenInput")?.value.trim();
+
+  if (!token) {
+    showToast(
+      "Enter your admin publishing token."
+    );
+
+    $("#adminTokenInput")?.focus();
+
+    return;
+  }
+
+  /*
+   * Keep token only for this browser session.
+   */
+  try {
+    sessionStorage.setItem(
+      "projecthub_admin_token",
+      token
+    );
+  } catch {}
+
+  const id =
+    makeProjectId(name);
+
+  const description =
+    $("#pDescription")?.value.trim() ||
+    "";
+
+  const category =
+    $("#pCategory")?.value ||
+    "Custom";
+
+  const tags =
+    ($("#pTags")?.value || "")
+      .split(",")
+      .map(x => x.trim())
+      .filter(Boolean)
+      .slice(0, 30);
+
+  /*
+   * Determine index.html.
+   */
+  const entryFile =
+    findEntryFile(cloudFiles);
+
+  if (!entryFile) {
+    showToast(
+      "Your project needs an index.html file."
+    );
+
+    setUploadStatus(
+      "No index.html was found.",
+      true
+    );
+
+    return;
+  }
+
+  const metadata = {
+    id,
+    name,
+    description,
+    category,
+    icon: "🚀",
+    version: "1.0.0",
+    tags,
+    entryFile
+  };
+
+  const formData =
+    new FormData();
+
+  formData.append(
+    "metadata",
+    JSON.stringify(metadata)
+  );
+
+  /*
+   * IMPORTANT:
+   *
+   * Your Worker expects:
+   *
+   * files = uploaded File objects
+   * paths = corresponding relative paths
+   */
+  for (const item of cloudFiles) {
+    formData.append(
+      "files",
+      item.file,
+      getFileName(item.path)
+    );
+
+    formData.append(
+      "paths",
+      item.path
+    );
+  }
+
+  const saveButton =
+    $("#addForm button[type='submit']");
+
+  const originalText =
+    saveButton?.textContent;
+
+  if (saveButton) {
+    saveButton.disabled = true;
+    saveButton.textContent =
+      "Publishing...";
+  }
+
+  setUploadStatus(
+    `Uploading ${cloudFiles.length} file(s) to Cloudflare R2...`
+  );
 
   try {
+    const response =
+      await fetch(
+        `${API_BASE}/api/projects`,
+        {
+          method: "POST",
 
-    showToast(
-      "Publishing project…"
-    );
+          headers: {
+            Authorization:
+              `Bearer ${token}`
+          },
 
-    const result =
-      await publishProject(project);
-
-
-    /*
-     * Add returned cloud project
-     */
-
-    const cloudProject = {
-
-      ...project,
-
-      ...(result.project || {}),
-
-      source: "cloud",
-
-      entryFile:
-        result.project?.entryFile ||
-        "index.html"
-    };
-
-
-    /*
-     * Remove any old version of this ID.
-     */
-
-    allProjects =
-      allProjects.filter(
-        p => p.id !== cloudProject.id
+          body: formData
+        }
       );
 
-    allProjects.push(
-      cloudProject
-    );
+    const text =
+      await response.text();
 
-
-    /*
-     * Reset form
-     */
-
-    $("#addForm")?.reset();
-
-
-    showToast(
-      "Project published successfully."
-    );
-
-
-    /*
-     * Return to library
-     */
-
-    navigate("library");
-
-
-    /*
-     * Refresh from D1 so the UI uses
-     * the authoritative cloud record.
-     */
+    let data;
 
     try {
+      data =
+        JSON.parse(text);
+    } catch {
+      data = {
+        ok: false,
+        error: text ||
+          `HTTP ${response.status}`
+      };
+    }
 
-      const cloud =
+    if (!response.ok || !data.ok) {
+      if (response.status === 401) {
+        throw new Error(
+          "Unauthorized. Check your ADMIN_TOKEN."
+        );
+      }
+
+      throw new Error(
+        data.message ||
+        data.error ||
+        `Publishing failed (HTTP ${response.status}).`
+      );
+    }
+
+    /*
+     * Successfully published.
+     */
+    showToast(
+      "Project published successfully!"
+    );
+
+    setUploadStatus(
+      `Published successfully — ${data.project?.files || cloudFiles.length} file(s) uploaded to R2.`
+    );
+
+    /*
+     * Clear local file selection.
+     */
+    cloudFiles = [];
+
+    updateSelectedFiles();
+
+    /*
+     * Reload cloud projects.
+     */
+    try {
+      const cloudProjects =
         await fetchCloudProjects();
 
       const map =
         new Map(
           allProjects.map(
-            p => [p.id, p]
+            project => [
+              project.id,
+              project
+            ]
           )
         );
 
-      cloud.forEach(
-        p => map.set(p.id, p)
+      cloudProjects.forEach(
+        project => {
+          map.set(
+            project.id,
+            project
+          );
+        }
       );
 
       allProjects =
         [...map.values()];
 
-      render();
+    } catch (error) {
+      console.warn(
+        "Could not refresh cloud projects:",
+        error
+      );
+    }
 
-    } catch {}
+    /*
+     * Reset form after successful publication.
+     */
+    const form =
+      $("#addForm");
 
+    if (form) {
+      /*
+       * Don't clear token.
+       * The user may publish another project.
+       */
+      const currentToken =
+        $("#adminTokenInput")?.value || "";
+
+      form.reset();
+
+      if ($("#adminTokenInput")) {
+        $("#adminTokenInput").value =
+          currentToken;
+      }
+    }
+
+    /*
+     * Go back to library.
+     */
+    navigate("library");
+
+    render();
 
   } catch (error) {
-
-    console.error(error);
-
-    showToast(
-      error.message ||
-      "Could not publish project."
+    console.error(
+      "Publish error:",
+      error
     );
+
+    const message =
+      error?.message ||
+      String(error);
+
+    /*
+     * This gives useful errors instead of
+     * the generic "Failed to fetch".
+     */
+    if (
+      message.toLowerCase()
+        .includes("failed to fetch")
+    ) {
+      setUploadStatus(
+        "Could not connect to the Cloudflare Worker. Check your internet connection or API URL.",
+        true
+      );
+
+      showToast(
+        "Could not connect to Cloudflare."
+      );
+    } else {
+      setUploadStatus(
+        message,
+        true
+      );
+
+      showToast(
+        message
+      );
+    }
 
   } finally {
-
-    if (submit) {
-
-      submit.disabled = false;
-
-      submit.textContent =
-        submit.dataset.oldText ||
-        "Publish";
+    if (saveButton) {
+      saveButton.disabled = false;
+      saveButton.textContent =
+        originalText ||
+        "Save project";
     }
   }
 }
 
 
 /* =========================================================
-   FILE INPUT
+   ENTRY FILE
    ========================================================= */
 
-function readFile(e) {
-
-  const f =
-    e.target.files[0];
-
-  if (f) {
-    loadFile(f);
-  }
-}
-
-
-function readDrop(e) {
-
-  e.preventDefault();
-
-  $("#dropzone")
-    ?.classList
-    .remove("drag");
-
-  const f =
-    e.dataTransfer.files[0];
-
-  if (f) {
-    loadFile(f);
-  }
-}
-
-
-function loadFile(f) {
-
-  if (!/\.html?$/i.test(f.name)) {
-
-    showToast(
-      "Choose an HTML file."
+function findEntryFile(files) {
+  const exact =
+    files.find(
+      item =>
+        item.path.toLowerCase() ===
+        "index.html"
     );
 
-    return;
+  if (exact) {
+    return exact.path;
   }
 
+  const nested =
+    files.find(
+      item =>
+        item.path
+          .toLowerCase()
+          .endsWith("/index.html")
+    );
 
-  const reader =
-    new FileReader();
+  if (nested) {
+    return nested.path;
+  }
 
-
-  reader.onload = () => {
-
-    $("#pHtml").value =
-      reader.result;
-
-    if (!$("#pName").value) {
-
-      $("#pName").value =
-        f.name.replace(
-          /\.html?$/i,
-          ""
-        );
-    }
-  };
-
-
-  reader.readAsText(f);
+  return null;
 }
 
 
 /* =========================================================
-   PREVIEW
+   PROJECT ID
    ========================================================= */
 
-function previewPaste() {
+function makeProjectId(name) {
+  return String(name || "project")
+    .toLowerCase()
+    .trim()
+    .replace(
+      /[^a-z0-9-_]+/g,
+      "-"
+    )
+    .replace(
+      /-+/g,
+      "-"
+    )
+    .replace(
+      /^-|-$/g,
+      ""
+    )
+    .slice(0, 70)
+    || `project-${Date.now()}`;
+}
 
+
+/* =========================================================
+   PATH CLEANING
+   ========================================================= */
+
+function cleanClientPath(value) {
+  let path =
+    String(value || "")
+      .replace(/\\/g, "/")
+      .trim();
+
+  path =
+    path
+      .split("/")
+      .filter(
+        part =>
+          part &&
+          part !== "." &&
+          part !== ".."
+      )
+      .join("/");
+
+  if (!path) {
+    return "";
+  }
+
+  if (
+    path.startsWith("/") ||
+    path.includes("\0")
+  ) {
+    return "";
+  }
+
+  return path.slice(0, 300);
+}
+
+
+/* =========================================================
+   FILE HELPERS
+   ========================================================= */
+
+function getFileName(path) {
+  return String(path)
+    .split("/")
+    .pop();
+}
+
+
+function guessMimeType(path) {
+  const extension =
+    String(path)
+      .split(".")
+      .pop()
+      .toLowerCase();
+
+  const types = {
+    html: "text/html",
+    htm: "text/html",
+    css: "text/css",
+    js: "text/javascript",
+    mjs: "text/javascript",
+    json: "application/json",
+    xml: "application/xml",
+
+    png: "image/png",
+    jpg: "image/jpeg",
+    jpeg: "image/jpeg",
+    gif: "image/gif",
+    svg: "image/svg+xml",
+    webp: "image/webp",
+    ico: "image/x-icon",
+
+    mp3: "audio/mpeg",
+    mp4: "video/mp4",
+    webm: "video/webm",
+
+    pdf: "application/pdf",
+
+    woff: "font/woff",
+    woff2: "font/woff2",
+    ttf: "font/ttf"
+  };
+
+  return (
+    types[extension] ||
+    "application/octet-stream"
+  );
+}
+
+
+/* =========================================================
+   COMMON FOLDER
+   ========================================================= */
+
+function getCommonTopFolder(paths) {
+  if (!paths.length) {
+    return "";
+  }
+
+  const first =
+    paths[0].split("/");
+
+  if (first.length <= 1) {
+    return "";
+  }
+
+  const candidate =
+    first[0];
+
+  if (
+    paths.every(
+      path =>
+        path.startsWith(
+          candidate + "/"
+        )
+    )
+  ) {
+    return candidate;
+  }
+
+  return "";
+}
+
+
+/* =========================================================
+   JSZIP LOADER
+   ========================================================= */
+
+let jsZipPromise = null;
+
+function loadJSZip() {
+  if (
+    window.JSZip
+  ) {
+    return Promise.resolve(
+      window.JSZip
+    );
+  }
+
+  if (jsZipPromise) {
+    return jsZipPromise;
+  }
+
+  jsZipPromise =
+    new Promise(
+      (resolve, reject) => {
+        const script =
+          document.createElement(
+            "script"
+          );
+
+        script.src =
+          JSZIP_URL;
+
+        script.onload =
+          () => {
+            if (window.JSZip) {
+              resolve(
+                window.JSZip
+              );
+            } else {
+              reject(
+                new Error(
+                  "JSZip loaded but is unavailable."
+                )
+              );
+            }
+          };
+
+        script.onerror =
+          () => reject(
+            new Error(
+              "Could not load ZIP support. Check your internet connection."
+            )
+          );
+
+        document.head.appendChild(
+          script
+        );
+      }
+    );
+
+  return jsZipPromise;
+}
+
+
+/* =========================================================
+   HTML PREVIEW
+   ========================================================= */
+
+function previewPasteProject() {
   const html =
     $("#pHtml")?.value;
 
   if (!html) {
-
     showToast(
       "Paste HTML first."
     );
@@ -1142,15 +1705,13 @@ function previewPaste() {
     return;
   }
 
-
-  const w =
+  const popup =
     window.open(
       "",
       "_blank"
     );
 
-  if (!w) {
-
+  if (!popup) {
     showToast(
       "Popup blocked."
     );
@@ -1158,14 +1719,9 @@ function previewPaste() {
     return;
   }
 
-
-  w.document.open();
-
-  w.document.write(
-    html
-  );
-
-  w.document.close();
+  popup.document.open();
+  popup.document.write(html);
+  popup.document.close();
 }
 
 
@@ -1174,31 +1730,30 @@ function previewPaste() {
    ========================================================= */
 
 function toggleTheme() {
-
-  const t =
+  const theme =
     document.documentElement
       .dataset.theme === "light"
-        ? "dark"
-        : "light";
+      ? "dark"
+      : "light";
 
   document.documentElement
-    .dataset.theme = t;
+    .dataset.theme =
+    theme;
 
   prefs.set(
     "theme",
-    t
+    theme
   );
 }
 
 
 function loadTheme() {
-
   document.documentElement
     .dataset.theme =
-      prefs.get(
-        "theme",
-        "dark"
-      );
+    prefs.get(
+      "theme",
+      "dark"
+    );
 }
 
 
@@ -1206,47 +1761,48 @@ function loadTheme() {
    TOAST
    ========================================================= */
 
-function showToast(m) {
-
+function showToast(message) {
   if (!els.toast) return;
 
-  els.toast.textContent = m;
+  els.toast.textContent =
+    message;
 
   els.toast.classList.add(
     "show"
   );
 
   clearTimeout(
-    showToast.t
+    showToast.timer
   );
 
-  showToast.t =
+  showToast.timer =
     setTimeout(
-      () =>
+      () => {
         els.toast.classList.remove(
           "show"
-        ),
-      2600
+        );
+      },
+      3000
     );
 }
 
 
 /* =========================================================
-   ESCAPE HTML
+   HTML ESCAPE
    ========================================================= */
 
-function esc(s) {
-
+function esc(value) {
   return String(
-    s ?? ""
+    value ?? ""
   ).replace(
     /[&<>"']/g,
-    c => ({
-      "&": "&amp;",
-      "<": "&lt;",
-      ">": "&gt;",
-      '"': "&quot;",
-      "'": "&#39;"
-    }[c])
+    character =>
+      ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;"
+      })[character]
   );
 }
