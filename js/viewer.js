@@ -1,11 +1,17 @@
-const API_BASE = "https://purchase.workers.dev";
+/* =========================================================
+   PROJECT LAUNCHER — CLOUD/R2 VIEWER
+   ========================================================= */
+
+const API_BASE =
+  "https://project-launcher-api.alertsvisapurchase.workers.dev";
 
 const qs =
   new URLSearchParams(
     location.search
   );
 
-const id = qs.get("id");
+const id =
+  qs.get("id");
 
 const frame =
   document.getElementById(
@@ -28,9 +34,7 @@ const errorBox =
    ========================================================= */
 
 async function boot() {
-
   if (!id) {
-
     fail(
       "No project ID was provided."
     );
@@ -38,48 +42,42 @@ async function boot() {
     return;
   }
 
-
-  let project;
-
+  let project = null;
 
   /*
-   * 1. Check built-in projects
+   * 1. Check static projects.
    */
-
-  project =
-    getStaticProjects()
-      .find(
-        x => x.id === id
-      );
-
-
-  /*
-   * 2. If not static, check cloud
-   */
-
-  if (!project) {
-
-    try {
-
-      const response =
-        await fetch(
-          `${API_BASE}/api/projects/${encodeURIComponent(id)}`
+  try {
+    project =
+      getStaticProjects()
+        .find(
+          item =>
+            item.id === id
         );
+  } catch {}
 
-      if (response.ok) {
 
-        const data =
-          await response.json();
+  /*
+   * 2. Check local IndexedDB projects.
+   */
+  if (!project) {
+    try {
+      project =
+        await idbGet(id);
+    } catch {}
+  }
 
-        if (data.ok) {
 
-          project =
-            data.project;
-        }
-      }
-
+  /*
+   * 3. Check Cloudflare Worker / D1.
+   */
+  if (!project) {
+    try {
+      project =
+        await fetchCloudProject(
+          id
+        );
     } catch (error) {
-
       console.error(
         "Cloud project lookup failed:",
         error
@@ -88,27 +86,7 @@ async function boot() {
   }
 
 
-  /*
-   * 3. If not cloud, check local IndexedDB
-   */
-
   if (!project) {
-
-    try {
-
-      project =
-        await idbGet(id);
-
-    } catch {}
-  }
-
-
-  /*
-   * Nothing found
-   */
-
-  if (!project) {
-
     fail(
       "The requested project does not exist."
     );
@@ -117,42 +95,42 @@ async function boot() {
   }
 
 
+  /*
+   * Update viewer title.
+   */
   document.title =
     `${project.name} — ProjectHub`;
 
-
-  const viewerName =
+  const nameElement =
     document.getElementById(
       "viewerName"
     );
 
-  const viewerMeta =
+  if (nameElement) {
+    nameElement.textContent =
+      project.name ||
+      "Project";
+  }
+
+  const metaElement =
     document.getElementById(
       "viewerMeta"
     );
 
-
-  if (viewerName) {
-
-    viewerName.textContent =
-      project.name;
-  }
-
-
-  if (viewerMeta) {
-
-    viewerMeta.textContent =
-      project.category || "";
+  if (metaElement) {
+    metaElement.textContent =
+      project.category ||
+      "";
   }
 
 
   /*
-   * Frame loaded
+   * Frame loaded.
    */
-
   frame.onload = () => {
-
-    loading.hidden = true;
+    if (loading) {
+      loading.hidden = true;
+    }
 
     frame.style.display =
       "block";
@@ -160,7 +138,6 @@ async function boot() {
 
 
   frame.onerror = () => {
-
     fail(
       "The project file could not be loaded."
     );
@@ -170,46 +147,12 @@ async function boot() {
   try {
 
     /*
-     * CLOUD PROJECT
+     * Browser-local project.
      */
-
-    if (
-      project.source === "cloud"
-    ) {
-
-      const entry =
-        project.entryFile ||
-        "index.html";
-
-
-      const entryPath =
-        entry
-          .split("/")
-          .map(
-            encodeURIComponent
-          )
-          .join("/");
-
-
-      frame.src =
-        `${API_BASE}/projects/` +
-        `${encodeURIComponent(project.id)}/` +
-        entryPath;
-
-
-      return;
-    }
-
-
-    /*
-     * LOCAL PROJECT
-     */
-
     if (
       project.source === "local" ||
       project.html
     ) {
-
       frame.srcdoc =
         project.html;
 
@@ -218,18 +161,108 @@ async function boot() {
 
 
     /*
-     * STATIC PROJECT
+     * Static project.
      */
+    if (
+      project.source === "static"
+    ) {
+      frame.src =
+        project.path;
 
-    frame.src =
-      project.path;
+      return;
+    }
 
-  } catch (error) {
+
+    /*
+     * Cloud/R2 project.
+     */
+    if (
+      project.source === "cloud"
+    ) {
+      const entry =
+        project.entryFile ||
+        "index.html";
+
+      frame.src =
+        `${API_BASE}/projects/` +
+        `${encodeURIComponent(project.id)}/` +
+        `${encodeURIComponent(entry)}`;
+
+      return;
+    }
+
+
+    /*
+     * Fallback.
+     */
+    if (project.path) {
+      frame.src =
+        project.path;
+
+      return;
+    }
 
     fail(
-      error.message
+      "This project has no entry file."
+    );
+
+  } catch (error) {
+    fail(
+      error?.message ||
+      String(error)
     );
   }
+}
+
+
+/* =========================================================
+   CLOUD PROJECT
+   ========================================================= */
+
+async function fetchCloudProject(id) {
+  const response =
+    await fetch(
+      `${API_BASE}/api/projects/${encodeURIComponent(id)}`,
+      {
+        method: "GET",
+        headers: {
+          Accept:
+            "application/json"
+        },
+        cache: "no-store"
+      }
+    );
+
+  const text =
+    await response.text();
+
+  let data;
+
+  try {
+    data =
+      JSON.parse(text);
+  } catch {
+    throw new Error(
+      `Cloud API returned invalid JSON (HTTP ${response.status}).`
+    );
+  }
+
+  if (!response.ok || !data.ok) {
+    throw new Error(
+      data.error ||
+      `Cloud API error (HTTP ${response.status}).`
+    );
+  }
+
+  return {
+    ...data.project,
+    source: "cloud",
+
+    path:
+      `${API_BASE}/projects/` +
+      `${encodeURIComponent(data.project.id)}/` +
+      `${encodeURIComponent(data.project.entryFile || "index.html")}`
+  };
 }
 
 
@@ -237,23 +270,19 @@ async function boot() {
    ERROR
    ========================================================= */
 
-function fail(msg) {
-
+function fail(message) {
   if (loading) {
     loading.hidden = true;
   }
 
   if (frame) {
-
     frame.style.display =
       "none";
   }
 
   if (errorBox) {
-
     errorBox.hidden = false;
   }
-
 
   const errorText =
     document.getElementById(
@@ -261,9 +290,8 @@ function fail(msg) {
     );
 
   if (errorText) {
-
     errorText.textContent =
-      msg;
+      message;
   }
 }
 
@@ -273,122 +301,107 @@ function fail(msg) {
    ========================================================= */
 
 function home() {
-
   location.href =
     "index.html";
 }
 
 
-const backBtn =
+const backButton =
   document.getElementById(
     "backBtn"
   );
 
-if (backBtn) {
-
-  backBtn.onclick = () => {
-
-    if (
-      history.length > 1
-    ) {
-
+if (backButton) {
+  backButton.onclick = () => {
+    if (history.length > 1) {
       history.back();
-
     } else {
-
       home();
     }
   };
 }
 
 
-const homeBtn =
+const homeButton =
   document.getElementById(
     "homeBtn"
   );
 
-if (homeBtn) {
-
-  homeBtn.onclick =
+if (homeButton) {
+  homeButton.onclick =
     home;
 }
 
 
-const retryBtn =
+const retryButton =
   document.getElementById(
     "retryBtn"
   );
 
-if (retryBtn) {
-
-  retryBtn.onclick =
-    () =>
-      location.reload();
+if (retryButton) {
+  retryButton.onclick =
+    () => location.reload();
 }
 
 
-const errorHomeBtn =
+const errorHomeButton =
   document.getElementById(
     "errorHomeBtn"
   );
 
-if (errorHomeBtn) {
-
-  errorHomeBtn.onclick =
+if (errorHomeButton) {
+  errorHomeButton.onclick =
     home;
 }
 
 
-const reloadBtn =
+/* =========================================================
+   RELOAD
+   ========================================================= */
+
+const reloadButton =
   document.getElementById(
     "reloadBtn"
   );
 
-if (reloadBtn) {
-
-  reloadBtn.onclick = () => {
-
-    try {
-
-      frame.contentWindow
-        .location.reload();
-
-    } catch {
-
-      location.reload();
-    }
-  };
+if (reloadButton) {
+  reloadButton.onclick =
+    () => {
+      try {
+        frame.contentWindow
+          .location
+          .reload();
+      } catch {
+        location.reload();
+      }
+    };
 }
 
 
-const fullBtn =
+/* =========================================================
+   FULLSCREEN
+   ========================================================= */
+
+const fullButton =
   document.getElementById(
     "fullBtn"
   );
 
-if (fullBtn) {
-
-  fullBtn.onclick =
+if (fullButton) {
+  fullButton.onclick =
     async () => {
-
       try {
 
         if (
           document.fullscreenElement
         ) {
-
-          await document
-            .exitFullscreen();
-
+          await document.exitFullscreen();
         } else {
-
-          await document
-            .documentElement
+          await document.documentElement
             .requestFullscreen();
         }
 
       } catch {
-
         frame.classList.toggle(
           "manual-full"
         );
