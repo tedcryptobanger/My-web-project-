@@ -1,5 +1,5 @@
 /* =========================================================
-   PROJECT LAUNCHER — CLOUD/R2 VIEWER
+   PROJECTHUB CLOUD VIEWER
    ========================================================= */
 
 const API_BASE =
@@ -42,42 +42,81 @@ async function boot() {
     return;
   }
 
+  /*
+   * 1. Static project
+   */
   let project = null;
 
-  /*
-   * 1. Check static projects.
-   */
   try {
-    project =
-      getStaticProjects()
-        .find(
-          item =>
-            item.id === id
-        );
+    if (
+      typeof getStaticProjects ===
+      "function"
+    ) {
+      project =
+        getStaticProjects()
+          .find(
+            p =>
+              String(p.id) ===
+              String(id)
+          );
+    }
   } catch {}
 
 
   /*
-   * 2. Check local IndexedDB projects.
+   * 2. Local IndexedDB project
    */
   if (!project) {
     try {
-      project =
-        await idbGet(id);
+      if (
+        typeof idbGet ===
+        "function"
+      ) {
+        project =
+          await idbGet(id);
+      }
     } catch {}
   }
 
 
   /*
-   * 3. Check Cloudflare Worker / D1.
+   * 3. Cloud project
    */
   if (!project) {
     try {
-      project =
-        await fetchCloudProject(
-          id
+      const response =
+        await fetch(
+          `${API_BASE}/api/projects/${encodeURIComponent(
+            id
+          )}`,
+          {
+            cache:
+              "no-store"
+          }
         );
-    } catch (error) {
+
+      if (
+        response.ok
+      ) {
+        const data =
+          await response.json();
+
+        if (
+          data?.ok &&
+          data.project
+        ) {
+          project =
+            {
+              ...data.project,
+              source:
+                "cloud"
+            };
+        }
+      }
+
+    } catch (
+      error
+    ) {
       console.error(
         "Cloud project lookup failed:",
         error
@@ -96,173 +135,130 @@ async function boot() {
 
 
   /*
-   * Update viewer title.
+   * Header
    */
   document.title =
     `${project.name} — ProjectHub`;
 
-  const nameElement =
+  const viewerName =
     document.getElementById(
       "viewerName"
     );
 
-  if (nameElement) {
-    nameElement.textContent =
-      project.name ||
-      "Project";
-  }
-
-  const metaElement =
+  const viewerMeta =
     document.getElementById(
       "viewerMeta"
     );
 
-  if (metaElement) {
-    metaElement.textContent =
+  if (viewerName) {
+    viewerName.textContent =
+      project.name;
+  }
+
+  if (viewerMeta) {
+    viewerMeta.textContent =
       project.category ||
       "";
   }
 
 
   /*
-   * Frame loaded.
+   * Loading
    */
-  frame.onload = () => {
-    if (loading) {
-      loading.hidden = true;
-    }
+  if (loading) {
+    loading.hidden =
+      false;
+  }
 
+  if (frame) {
     frame.style.display =
-      "block";
-  };
+      "none";
 
+    frame.onload =
+      () => {
+        if (loading) {
+          loading.hidden =
+            true;
+        }
 
-  frame.onerror = () => {
-    fail(
-      "The project file could not be loaded."
-    );
-  };
+        frame.style.display =
+          "block";
+      };
 
-
-  try {
-
-    /*
-     * Browser-local project.
-     */
-    if (
-      project.source === "local" ||
-      project.html
-    ) {
-      frame.srcdoc =
-        project.html;
-
-      return;
-    }
-
-
-    /*
-     * Static project.
-     */
-    if (
-      project.source === "static"
-    ) {
-      frame.src =
-        project.path;
-
-      return;
-    }
-
-
-    /*
-     * Cloud/R2 project.
-     */
-    if (
-      project.source === "cloud"
-    ) {
-      const entry =
-        project.entryFile ||
-        "index.html";
-
-      frame.src =
-        `${API_BASE}/projects/` +
-        `${encodeURIComponent(project.id)}/` +
-        `${encodeURIComponent(entry)}`;
-
-      return;
-    }
-
-
-    /*
-     * Fallback.
-     */
-    if (project.path) {
-      frame.src =
-        project.path;
-
-      return;
-    }
-
-    fail(
-      "This project has no entry file."
-    );
-
-  } catch (error) {
-    fail(
-      error?.message ||
-      String(error)
-    );
-  }
-}
-
-
-/* =========================================================
-   CLOUD PROJECT
-   ========================================================= */
-
-async function fetchCloudProject(id) {
-  const response =
-    await fetch(
-      `${API_BASE}/api/projects/${encodeURIComponent(id)}`,
-      {
-        method: "GET",
-        headers: {
-          Accept:
-            "application/json"
-        },
-        cache: "no-store"
-      }
-    );
-
-  const text =
-    await response.text();
-
-  let data;
-
-  try {
-    data =
-      JSON.parse(text);
-  } catch {
-    throw new Error(
-      `Cloud API returned invalid JSON (HTTP ${response.status}).`
-    );
+    frame.onerror =
+      () => {
+        fail(
+          "The project file could not be loaded."
+        );
+      };
   }
 
-  if (!response.ok || !data.ok) {
-    throw new Error(
-      data.error ||
-      `Cloud API error (HTTP ${response.status}).`
-    );
-  }
 
-  return {
-    ...data.project,
-    source: "cloud",
+  /*
+   * CLOUD PROJECT
+   */
+  if (
+    project.source ===
+    "cloud"
+  ) {
+    const entry =
+      project.entryFile ||
+      "index.html";
 
-    path:
+    const projectURL =
       `${API_BASE}/projects/` +
-      `${encodeURIComponent(data.project.id)}/` +
-      `${encodeURIComponent(data.project.entryFile || "index.html")}`
-  };
+      `${encodeURIComponent(
+        project.id
+      )}/` +
+      `${entry
+        .split("/")
+        .map(
+          encodeURIComponent
+        )
+        .join("/")}`;
+
+    console.log(
+      "Loading cloud project:",
+      projectURL
+    );
+
+    frame.src =
+      projectURL;
+
+    return;
+  }
+
+
+  /*
+   * LOCAL PROJECT
+   */
+  if (
+    project.source ===
+      "local" ||
+    project.html
+  ) {
+    frame.srcdoc =
+      project.html ||
+      "";
+
+    return;
+  }
+
+
+  /*
+   * STATIC PROJECT
+   */
+  if (project.path) {
+    frame.src =
+      project.path;
+
+    return;
+  }
+
+
+  fail(
+    "No project source was found."
+  );
 }
 
 
@@ -272,7 +268,8 @@ async function fetchCloudProject(id) {
 
 function fail(message) {
   if (loading) {
-    loading.hidden = true;
+    loading.hidden =
+      true;
   }
 
   if (frame) {
@@ -281,7 +278,8 @@ function fail(message) {
   }
 
   if (errorBox) {
-    errorBox.hidden = false;
+    errorBox.hidden =
+      false;
   }
 
   const errorText =
@@ -312,13 +310,17 @@ const backButton =
   );
 
 if (backButton) {
-  backButton.onclick = () => {
-    if (history.length > 1) {
-      history.back();
-    } else {
-      home();
-    }
-  };
+  backButton.onclick =
+    () => {
+      if (
+        history.length >
+        1
+      ) {
+        history.back();
+      } else {
+        home();
+      }
+    };
 }
 
 
@@ -340,7 +342,8 @@ const retryButton =
 
 if (retryButton) {
   retryButton.onclick =
-    () => location.reload();
+    () =>
+      location.reload();
 }
 
 
@@ -368,14 +371,19 @@ if (reloadButton) {
   reloadButton.onclick =
     () => {
       try {
-        frame.contentWindow
-          .location
-          .reload();
+        if (
+          frame?.contentWindow
+        ) {
+          frame.contentWindow
+            .location.reload();
+        } else {
+          location.reload();
+        }
       } catch {
         location.reload();
       }
     };
-}
+  }
 
 
 /* =========================================================
@@ -391,7 +399,6 @@ if (fullButton) {
   fullButton.onclick =
     async () => {
       try {
-
         if (
           document.fullscreenElement
         ) {
@@ -400,9 +407,8 @@ if (fullButton) {
           await document.documentElement
             .requestFullscreen();
         }
-
       } catch {
-        frame.classList.toggle(
+        frame?.classList.toggle(
           "manual-full"
         );
       }
